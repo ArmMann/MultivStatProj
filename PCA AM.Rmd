@@ -1,0 +1,347 @@
+---
+title: "Boston Data Analysis,        prepared by: Armen Manukyan"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+#tinytex::install_tinytex()
+# install.packages("MASS") 
+
+list_of_packages <- c("MASS", "dplyr", "purrr", "tidyr", "ggplot2", "gridExtra", "magrittr", "psych")
+new_packages <- list_of_packages[!(list_of_packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) install.packages(new_packages)
+
+
+
+library(knitr)
+library(MASS)
+library(car)
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(magrittr)
+library(psych)
+library(MASS)
+library(corrplot)
+library(factoextra)
+
+data(Boston)
+```
+
+<h2>Initial Inspection:<h2>
+
+The selected dataset contains information  concerning housing in the area of Boston Massachusetts. The dataset consists of 506 datapoints (rows) and 14 variables (columns). The variables can be defined as follows: 
+crim: per capita crime rate by town.
+zn: the proportion of residential land zoned for lots over 25,000 sq.ft. 
+indus:  the proportion of non-retail business acres per town.
+chas:  Charles River dummy variable (1 if tract bounds river; 0 otherwise). 
+nox: oxides concentration .
+rm:  average number of rooms per dwelling. 
+age: the proportion of owner-occupied units.
+dis: weighted mean of distances to five Boston employment centres. 
+rad: index of accessibility to radial highways.
+tax: property-tax rate . 
+ptratio: This is the pupil-teacher ratio by town. 
+black: This is the 1000(Bk - 0.63)^2 where Bk is the proportion of Black people by town.
+lstat: This is the percentage of lower status of the population.
+medv: This is the median value of owner-occupied homes in $1000s and is our target variable.
+
+From the markdown code inspection, we see that the dataset does not contain any missing (NA) values. Also, the dataset contains both numerical (like crim, zn, indus) and categorical (like chas, rad) data types. 
+```{r, massage = FALSE}
+
+head(Boston)
+
+# Shape
+#cat('Shape of Data is : ', nrow(Boston), 'rows and ', ncol(Boston), 'columns\n')
+
+#print("Check for NA values")
+#colSums(is.na(Boston)) 
+
+#print("Check the structure of the data")
+#str(Boston)
+```
+
+
+
+
+
+
+<h1>Exploratory Data Analysis<h1>
+
+Lets plot the scatterplots for  'medv' (median value of owner-occupied homes) with lstat rm,crim. Not to overload with the paired plots we may restrict by this group as the most intuitive at this point, and due to fact that the full 14 variable plots would take much space.
+Additionally we will plot the PDF approximation plots for all the variables.
+
+```{r echo=FALSE, warning=FALSE, fig.width=7, fig.height=4}
+
+
+par(mfrow = c(1, 2), oma = c(0, 0, 2, 0))
+
+
+pairs(Boston[,c("medv", "lstat", "rm", "crim")], pch = 19, cex = 0.5)
+
+```
+```{r, massage = FALSE, warning=FALSE}
+# Create a list to hold all the plots
+plot_list <- list()
+for(i in names(Boston)){
+  p <- ggplot(Boston, aes_string(i)) +
+    geom_histogram(aes(y=..density..), binwidth = diff(range(Boston[,i]))/30, colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666") +
+    labs(x=i, y="PDF") +
+    theme_minimal()
+  plot_list[[i]] <- p
+}
+
+
+title <- grid::textGrob("PDFS", gp = grid::gpar(fontsize = 12))
+
+grid::grid.draw(gridExtra::arrangeGrob(grobs = plot_list, ncol = 3, top = title))
+```
+
+LSTAT seems to behave inversely related to medv based on scatterplot, but it shows left-skewness, rm seems to have a shape of gaussian distribution centered near 6. Additionally, other variables may be bimodal, presenting two peaks. This could pose challenges since numerous statistical assumptions, crucial for the validity of many analytical techniques, require the data to be normally distributed.
+
+
+**Descriptive Statistics**
+
+Now let's explore the summary statistics of the Boston Housing dataset a little more.
+
+
+the following insights can be gathered about the variables:
+
+crim: The crime rate varies significantly with 3.6 mean rate,and 88 as a maximum rate.
+indus: The average proportion of non-retail business acres per town is 11.14, with a maximum value of 27.74. 
+chas: This is a binary variable. The mean of 0.069 suggests that just under 7% of the houses tract the Charles River.
+nox: The  oxide concentration has a mean of 0.55 and ranges from 0.385 to 0.871.
+rm: On average, dwellings have about 6.28 rooms, with a minimum of 3.56 and a maximum of 8.78.
+age: The towns in the dataset have a high proportion of old houses, with an average of 68.57% of  houses built before 1940.
+dis: The average weighted distance to the five Boston employment centers is 3.8, with a maximum of 12.1.
+
+
+
+The standard deviation of 28.15 for the house age seems too much.
+The standard deviation of 7.14 suggests that the percentage of lower status of the population (lstat) varies significantly around the mean across different towns in Boston.
+The standard deviation of 8.60 for per capita crime rate by town (crim) indicates  that some towns may have significantly higher crime rates than others.
+.
+```{r, massage = FALSE}
+
+#summary(Boston)
+
+sd_lstat <- sd(Boston$lstat)
+#print(paste("Standard deviation of lstat: ", sd_lstat))
+
+sd_indus <- sd(Boston$indus)
+#print(paste("Standard deviation of indus: ", sd_indus))
+
+sd_crim <- sd(Boston$crim)
+#print(paste("Standard deviation of crim: ", sd_crim))
+
+sd_age <- sd(Boston$age)
+#print(paste("Standard deviation of age: ", sd_age))
+
+sd_medv <- sd(Boston$medv)
+#print(paste("Standard deviation of medv: ", sd_medv))
+
+
+```
+
+The scales of our variables are very different , indicating the need for a data rescaling process to enhance the overall quality of our dataset. Which we will perform along with PCA while, and will perform Linear Regression on unscaled data
+
+
+
+```{r echo=FALSE, warning=FALSE, fig.width=4, fig.height=4}
+
+
+cor_matrix <- cor(Boston)
+corrplot(cor_matrix, method = "color", type = "upper", 
+         order = "hclust", addCoef.col = "black", 
+         tl.col="black", tl.srt=45, number.cex = 0.5, title = "Correlation Matrix", mar = c(0,0,1,0))
+
+
+```
+
+Observation: Our target variable has strong correlations with RM/LSTAT, which is logical. However, we also can see that there is considerable correlation among our predictor variables. For example, DIS is highly correlated with INDUS, NOX, and AGE.
+
+
+**Linear Regression**
+
+We choose MEDV variable, which represents the median value of houses as our dependent variable in regression analysis. This is a clear measure of the housing price, which makes it a good choice for a dependent variable. When we develop a model to predict MEDV, we are  developing a model to predict house prices, which is a common task from a business needs perspective.
+
+
+We will use 2 regression models - first one with all the variables and the second one with only the variables with hghest correlation : RM/LSTAT.
+The summary of the linear regression modela gives a lot of information. The first thing we can look at is the coefficients of the predictors of first model where we used all variables. The t-values and the corresponding p-values test the null hypothesis that each coefficient is zero, given that all other predictors are in the model.
+the crim, zn, chas, nox, rm, dis, rad, tax, ptratio, black, and lstat variables are statistically significant at the 0.05 level.
+The residuals provide us with information about the difference between the observed and predicted values of the dependent variable (medv).
+
+
+```{r}
+linear_model <- lm(medv ~ ., data = Boston)
+
+linear_model2 <- lm(medv ~ rm+lstat, data = Boston)
+summary(linear_model)
+summary(linear_model2)
+```
+
+
+
+```{r, results='asis', echo=FALSE}
+cat("The formula for model 1 is given by:\n")
+cat("$\\hat{\\text{medv}} = 36.46 - 0.108 \\times \\text{crim} + 0.046 \\times \\text{zn} + 2.687 \\times \\text{chas} - 17.77 \\times \\text{nox} + 3.81 \\times \\text{rm} - 1.476 \\times \\text{dis} + 0.306 \\times \\text{rad} - 0.0123 \\times \\text{tax} - 0.9527 \\times \\text{ptratio} + 0.00931 \\times \\text{black} - 0.5248 \\times \\text{lstat}$")
+
+```
+
+
+```{r, results='asis', echo=FALSE}
+cat("The formula for model 2 is given by:\n")
+cat("$\\hat{\\text{medv}} = -1.35827 + 5.09479 \\times \\text{rm} - 0.64236 \\times \\text{lstat}$")
+
+
+```
+
+The second model uses only the RM (average number of rooms per dwelling) and LSTAT (lower status of the population) variables as predictors, which were selected based on their high correlation with medv (median value of owner-occupied homes).
+
+The coefficients indicate that as the average number of rooms per dwelling increases by one unit, the median value of owner-occupied homes is expected to increase by approximately 5.09 units, assuming all other variables are held constant.
+
+In terms of model fit, the Multiple R-squared value is 0.6386, and the Adjusted R-squared is 0.6371. This indicates that approximately 63.86% of the variability in medv is explained by rm and lstat in the model.
+
+Comparing this to the first model ,  we see that the 1st model had a higher R-squared and Adjusted R-squared values (0.7406 and 0.7338), suggesting a better overall fit. However, it's worth noting that adding more predictors to a model doesn't necessarily mean the model is better, especially if the added variables are linear combinations of each other.
+
+While the simpler model2 explains less of the variance in medv, it is easier to interpret and may be more useful. In this case  number of rooms is  interpretible while many variables like oxides concentration and tax-rate (used in model1) may be not so well understandable in relation to predicting house prices. 
+
+The OLS solution for a linear regression problem is given by:
+
+$$\hat{\beta} = (X^T X)^{-1} X^T Y$$
+
+Lets check if we achieve same results for the second model by creating a matrix with one's in first column , rm in second column and lstat in third and berform the closed form formula to obtain beta hat:
+```{r}
+
+Y <- Boston$medv
+
+
+X <- cbind(1, Boston$rm, Boston$lstat)
+
+X_transpose <- t(X)
+X_transpose_X <- X_transpose %*% X
+
+
+inverse_X_transpose_X <- solve(X_transpose_X)
+
+
+X_transpose_Y <- X_transpose %*% Y
+
+beta_hat <- inverse_X_transpose_X %*% X_transpose_Y
+
+
+print(beta_hat)
+
+```
+
+
+
+
+**PCA and Data Scaling**
+
+
+We will try to use PCA  to find the directions  where the variance of the data is maximized. If features are not on similar scales, those with larger scales will dominate the principal components, leading to biased results. When the data is standardized, all features will be on equal scales, and PCA can find the true directions along which the variance of the data is maximized.
+We will use Z normalization.
+
+
+
+
+Now, looking at the densities of a rescaled dataset to observe how the mean and standard deviation have changed while preserving their original forms.
+
+```{r, massage = FALSE}
+
+df <- MASS::Boston
+
+
+rescale <- function(x) {
+  return((x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE))
+}
+
+#  rescale function to all columns
+df_std <- df %>% mutate(across(everything(), rescale))
+
+
+df_stats <- psych::describe(df_std)[c(2,4),] # 2 is mean and 4 is sdon
+
+
+plot_list <- list()
+for(i in names(df_std)){
+  p <- ggplot(df_std, aes_string(i)) +
+    geom_histogram(aes(y=..density..), binwidth = diff(range(df_std[,i]))/30, colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666") +
+    labs(x=i, y="PDF") +
+    theme_minimal()
+  plot_list[[i]] <- p
+}
+
+
+grid.arrange(grobs = plot_list, ncol = 3)
+
+
+```
+
+
+
+Now we can apply PCA to our dataset and identify the principal components which explain the most variance in the data. As we already assumed that medv is our dependent variable in regression , we will drop that column, and perform PCA on all columns except the house price column. Theoretically we could have performed PCA with that column included as well.
+
+```{r}
+# \ PCA without the 'medv' column
+pca <- prcomp(df_std[, !names(df_std) %in% "medv"], scale = TRUE)
+
+# new df for PC's
+df_std_pca <- as.data.frame(pca$x)
+names(df_std_pca) <- paste0("PCA", 1:ncol(df_std_pca))
+
+
+df_std_pca$MEDV <- df_std$medv
+
+#first 3
+pca$rotation[,1:3]
+
+# Variance explained by the first three  components
+summary(pca)$importance[2, 1:3]
+```
+
+We can see that the highest responsibilities on the first principal component are associated with the variables indus, nox, age, dis, rad, tax, and lstat, all with a positive sign, indicating they tend to increase together in the same direction. This could suggest that these variables might be representing an underlying factor related to the overall economic activity in the area.
+
+For the second principal component, the variables chas and age have the highest loadings but in the opposite direction. This might indicate an underlying factor related to how the age of the house and its proximity to the Charles River (chas) relate to each other.
+
+In the third principal component, rm (average number of rooms ) shows the highest positive loading, suggesting this component might be capturing aspects related to the size or living standards of the houses.
+
+The summary of the PCA gives the proportion of the total variance in the data explained by each of the principal components. The first principal component explains 47% of the total variance, the second component explains 11%, and the third component explains 9.5%. Therefore, the first three principal components together explain about 68% of the total variance in the data, which is a good cumulative explained variance for just three components. This suggests that these three components can provide a  simplified representation of our dataset without too much loss of information.
+
+```{r, fig.width=4, fig.height=4}
+fviz_pca_var(pca, col.var = "contrib", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE)  # Avoid text overlapping
+
+```
+
+We may observe that LSTAT is close to coincide with x axis, and shows negative correlation with variables DIS, ZN , BLACK. CHAS variable hass almost no correlation with other variables.
+Interesting observation : AGE and DIS seem to have strong negative correlation, meaning The older houses were initially built closer to the Boston employment centers: the older the house the less its distance to employment center.
+
+
+```{r, fig.width=4, fig.height=4}
+# Plotting
+ggplot(df_std_pca, aes(x = PCA1, y = PCA2)) +
+  geom_point(aes(color = MEDV), alpha = 0.6) +
+  scale_color_gradient(low = "blue", high = "red") +
+  labs(title = "Projection of Data on the First Two Principal Components",
+       x = "PC1",
+       y = "PC2") +
+  theme_minimal()
+```
+
+
+We also create a scatterplot with PCA1 on the x-axis and PCA2 on the y-axis. The points are colored based on the MEDV variable, which was our target variable in the regression. The color gradient is from blue to red, with blue indicating lower values and red indicating higher values.
+The plot shows how the data is distributed in the space defined by the first two principal components, and the color of the points  gives some idea of how the target variable (MEDV) varies across this space.
+
+Some clustering similarities can be noticed as low Values(blue) of MEDV are grouped where PC1 is high and PC2 is low, and High values(reds) are grouped at opposite top left.
